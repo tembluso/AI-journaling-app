@@ -246,7 +246,7 @@ export default function ReflectPanel({ note, onError }) {
   }
 
   return (
-    <div className="h-full flex flex-col gap-3">
+    <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="flex items-center gap-2">
         <select
           value={mode}
@@ -276,7 +276,7 @@ export default function ReflectPanel({ note, onError }) {
       </div>
 
       {/* Tarjeta con altura controlada y scroll interno */}
-      <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded p-4 overflow-auto">
+      <div className="flex-1 min-h-0 bg-zinc-900 border border-zinc-800 rounded p-4 overflow-auto">
         {streaming ? (
           <div className="space-y-3">
             <div className="text-xs opacity-70">Generando reflexión…</div>

@@ -108,8 +108,8 @@ export default function App() {
       )}
 
       {/* Main */}
-      <main className={`flex-1 grid ${showReflect ? "grid-cols-2" : "grid-cols-1"}`}>
-        <section className="p-0">
+      <main className={`flex-1 min-h-0 grid ${showReflect ? "grid-cols-2" : "grid-cols-1"}`}>
+        <section className="p-0 min-h-0">
           <NoteEditor
             key={selectedId || "new"}
             noteId={selectedId}
@@ -120,7 +120,7 @@ export default function App() {
           />
         </section>
         {showReflect && (
-          <section className="p-4 border-l border-zinc-800">
+          <section className="p-4 border-l border-zinc-800 min-h-0">
             <ReflectPanel note={selectedNote} onError={setError} />
           </section>
         )}
