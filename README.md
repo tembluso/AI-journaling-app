@@ -18,6 +18,7 @@ A minimal, Apple Notes–style journaling app with AI reflections. Users can wri
 
 ## Monorepo Layout
 ├─ Backend/ # FastAPI app
+
 │ ├─ main.py
 │ ├─ ... (routers/services)
 │ └─ requirements.txt # Python deps for Backend
