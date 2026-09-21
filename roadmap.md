@@ -11,7 +11,10 @@ These are backend logic and carry forward unchanged in spirit; only the
 transport (SSE) and storage layer change in later phases.
 
 ## Phase 1 — Backend: make it reachable and safe
-- [ ] Swap SQLite → Postgres (Supabase/Railway/Neon) so a phone can hit it.
+- [x] Swap SQLite → Postgres. Using Supabase project "Journaling App"
+      (`eqmgfasourirfmaurrlb`), schema applied via migration. Connect
+      through the session pooler host, not `db.<ref>.supabase.co` directly —
+      that host is IPv6-only and won't resolve on most networks.
 - [ ] Deploy FastAPI somewhere reachable (Railway/Render/Fly.io) with secrets
       as real env vars, not a `.env` sitting next to code.
 - [ ] Add real auth. `User` model exists but is unused — every note is global.
@@ -21,14 +24,18 @@ transport (SSE) and storage layer change in later phases.
       `.venv`/`.env` are gitignored and untracked.
 
 ## Phase 2 — Mobile app shell (Expo / React Native)
-- [ ] New Expo (React Native) project — replaces `frontend/`, not a port of
-      it: Tailwind/DOM CSS and `EventSource` don't exist in RN.
-- [ ] Re-implement note list/folders, note editor, and reflect panel as
-      native screens with React Navigation.
-- [ ] Replace SSE with a RN-compatible streaming approach (chunked fetch
-      streaming instead of `EventSource`).
-- [ ] Get it running in Expo Go on a real phone — first "it works on my
-      phone" milestone.
+- [x] New Expo (React Native + TypeScript) project in `mobile/` — replaces
+      `frontend/`, not a port of it: Tailwind/DOM CSS and `EventSource`
+      don't exist in RN.
+- [x] Auth screens wired to the Phase 1 backend, token in `expo-secure-store`.
+- [x] Note list + note editor (autosave) + reflect panel as native screens
+      with React Navigation.
+- [ ] Folders UI (backend supports it; app currently shows a flat list).
+- [ ] Replace the current blocking non-streaming reflect call with a RN-
+      compatible streaming approach (chunked fetch instead of `EventSource`,
+      which doesn't exist in RN).
+- [ ] Verify on a real phone via Expo Go (bundles cleanly on web/Metro as
+      of this pass; physical-device check still pending).
 
 ## Phase 3 — Differentiating features
 - [ ] Text selection → "ask AI about this part": track selection range in
@@ -50,4 +57,5 @@ transport (SSE) and storage layer change in later phases.
 ---
 
 ## Status
-- **Current phase:** Phase 1 (backend)
+- **Current phase:** Phase 2 (mobile shell) — core screens built, needs a
+  real-device check via Expo Go and folders UI.

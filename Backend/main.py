@@ -14,21 +14,24 @@ from .ai_stream import stream_reflection
 
 models.Base.metadata.create_all(bind=database.engine)
 
-# Mini-migración para bases sqlite ya existentes: columnas nuevas si no existen
-with database.engine.begin() as conn:
-    note_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('notes')")).mappings()]
-    if "folder_id" not in note_cols:
-        conn.execute(text("ALTER TABLE notes ADD COLUMN folder_id INTEGER REFERENCES folders(id)"))
-    if "user_id" not in note_cols:
-        conn.execute(text("ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id)"))
+# Mini-migración para bases sqlite locales ya existentes (columnas nuevas si no
+# existen). Postgres/Supabase ya tiene el esquema correcto vía migración
+# aplicada directamente, y no soporta PRAGMA.
+if database.engine.dialect.name == "sqlite":
+    with database.engine.begin() as conn:
+        note_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('notes')")).mappings()]
+        if "folder_id" not in note_cols:
+            conn.execute(text("ALTER TABLE notes ADD COLUMN folder_id INTEGER REFERENCES folders(id)"))
+        if "user_id" not in note_cols:
+            conn.execute(text("ALTER TABLE notes ADD COLUMN user_id INTEGER REFERENCES users(id)"))
 
-    folder_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('folders')")).mappings()]
-    if "user_id" not in folder_cols:
-        conn.execute(text("ALTER TABLE folders ADD COLUMN user_id INTEGER REFERENCES users(id)"))
+        folder_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('folders')")).mappings()]
+        if "user_id" not in folder_cols:
+            conn.execute(text("ALTER TABLE folders ADD COLUMN user_id INTEGER REFERENCES users(id)"))
 
-    user_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('users')")).mappings()]
-    if "hashed_password" not in user_cols:
-        conn.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR"))
+        user_cols = [row["name"] for row in conn.execute(text("PRAGMA table_info('users')")).mappings()]
+        if "hashed_password" not in user_cols:
+            conn.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR"))
 
 app = FastAPI(title="Notes MVP")
 
