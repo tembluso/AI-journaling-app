@@ -19,6 +19,7 @@ import type { ReflectMode, SelectionRange } from "../api/client";
 import NoteChat from "../components/NoteChat";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, font, radius, spacing } from "../theme";
+import { parsePartialJson } from "../utils/partialJson";
 
 type Props = NativeStackScreenProps<RootStackParamList, "NoteEditor">;
 
@@ -395,26 +396,17 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           )}
           {reflectBusy ? (
             <ScrollView style={styles.reflectScroll}>
+              {/* The model streams JSON; render what's parsed so far with the
+                  same layout as the finished reflection, so it grows in place. */}
+              <ReflectionSections value={parsePartialJson(reflectStreamText)} />
               <View style={styles.thinkingRow}>
                 <ActivityIndicator size="small" color={colors.accent} />
                 <Text style={styles.thinkingLabel}>Reflecting…</Text>
               </View>
-              <Text style={styles.reflectValue}>{reflectStreamText}</Text>
             </ScrollView>
           ) : reflection ? (
             <ScrollView style={styles.reflectScroll}>
-              {Object.entries(reflection).map(([key, value]) => (
-                <View key={key} style={styles.reflectSection}>
-                  <Text style={styles.reflectKey}>{key.replace(/_/g, " ")}</Text>
-                  <Text style={styles.reflectValue}>
-                    {Array.isArray(value)
-                      ? value.map((v) => `•  ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n")
-                      : typeof value === "object"
-                      ? JSON.stringify(value, null, 2)
-                      : String(value)}
-                  </Text>
-                </View>
-              ))}
+              <ReflectionSections value={reflection} />
             </ScrollView>
           ) : (
             <Text style={styles.reflectValue}>No reflection yet.</Text>
@@ -422,6 +414,26 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         </View>
       )}
     </KeyboardAvoidingView>
+  );
+}
+
+function ReflectionSections({ value }: { value: unknown }) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return (
+    <>
+      {Object.entries(value).map(([key, v]) => (
+        <View key={key} style={styles.reflectSection}>
+          <Text style={styles.reflectKey}>{key.replace(/_/g, " ")}</Text>
+          <Text style={styles.reflectValue}>
+            {Array.isArray(v)
+              ? v.map((item) => `•  ${typeof item === "string" ? item : JSON.stringify(item)}`).join("\n")
+              : typeof v === "object"
+              ? JSON.stringify(v, null, 2)
+              : String(v)}
+          </Text>
+        </View>
+      ))}
+    </>
   );
 }
 

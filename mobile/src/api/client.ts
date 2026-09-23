@@ -117,6 +117,36 @@ export const reflectNote = (
 // this long between chunks once started, give up so the caller can fall
 // back to the non-streaming endpoint instead of hanging forever.
 const STREAM_STALL_MS = 12000;
+// The server sends keep-alive pings, which reset the stall timer, so also
+// cap the whole stream in case the model hangs while the connection lives.
+const STREAM_MAX_MS = 90000;
+
+type SSEFrame = { eventType: string; data: string };
+
+// Splits complete SSE frames off the front of the buffer. The spec allows
+// CRLF, LF or CR line endings, and sse-starlette (the backend) uses CRLF, so
+// frames end in "\r\n\r\n", never a bare "\n\n". A separator split across two
+// network chunks just isn't matched until the rest of it arrives.
+export function takeSSEFrames(buffer: string): { frames: SSEFrame[]; rest: string } {
+  const frames: SSEFrame[] = [];
+  const separator = /\r\n\r\n|\n\n|\r\r/;
+  let match: RegExpExecArray | null;
+  while ((match = separator.exec(buffer))) {
+    const frame = buffer.slice(0, match.index);
+    buffer = buffer.slice(match.index + match[0].length);
+
+    // Each frame has "event: x" and "data: {...}" lines; ": ping" comment
+    // frames have neither and are dropped.
+    let eventType = "message";
+    let data = "";
+    for (const line of frame.split(/\r\n|\n|\r/)) {
+      if (line.startsWith("event:")) eventType = line.slice(6).trim();
+      else if (line.startsWith("data:")) data += line.slice(5).trim();
+    }
+    if (data) frames.push({ eventType, data });
+  }
+  return { frames, rest: buffer };
+}
 
 async function streamSSE(
   path: string,
@@ -129,6 +159,11 @@ async function streamSSE(
 
   let stallTimer: ReturnType<typeof setTimeout> | null = null;
   let stalled = false;
+  let gotDone = false;
+  const maxTimer = setTimeout(() => {
+    stalled = true;
+    internalController.abort();
+  }, STREAM_MAX_MS);
   function resetStallTimer() {
     if (stallTimer) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
@@ -155,32 +190,23 @@ async function streamSSE(
       const { done, value } = await reader.read();
       if (done) break;
       resetStallTimer();
-      buffer += decoder.decode(value, { stream: true });
+      const { frames, rest } = takeSSEFrames(buffer + decoder.decode(value, { stream: true }));
+      buffer = rest;
 
-      // SSE frames are separated by a blank line; each frame has "event: x"
-      // and "data: {...}" lines.
-      let sepIndex: number;
-      while ((sepIndex = buffer.indexOf("\n\n")) !== -1) {
-        const frame = buffer.slice(0, sepIndex);
-        buffer = buffer.slice(sepIndex + 2);
-
-        let eventType = "message";
-        let data = "";
-        for (const line of frame.split("\n")) {
-          if (line.startsWith("event:")) eventType = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-
+      for (const { eventType, data } of frames) {
         let parsed: any;
         try {
           parsed = JSON.parse(data);
         } catch {
           continue; // ignore malformed frame
         }
+        if (eventType === "done") gotDone = true;
         onEvent(eventType, parsed);
       }
     }
+    // Otherwise a stream that closes early leaves the caller's spinner running
+    // forever; reporting it lets the caller fall back or show an error.
+    if (!gotDone) onError?.(new Error("The connection closed before the reply finished"));
   } catch (e: any) {
     if (e?.name === "AbortError") {
       if (stalled) onError?.(new Error("Timed out waiting for a response"));
@@ -189,6 +215,7 @@ async function streamSSE(
     onError?.(e instanceof Error ? e : new Error(String(e)));
   } finally {
     if (stallTimer) clearTimeout(stallTimer);
+    clearTimeout(maxTimer);
   }
 }
 
