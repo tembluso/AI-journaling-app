@@ -54,12 +54,30 @@ class NoteOut(NoteBase):
 class ReflectionRequest(BaseModel):
     mode: Literal["socratico", "estructurado", "semanal"]
     prompt_payload: dict = Field(default_factory=dict)
+    # Optional highlighted passage, as character offsets into the note's content
+    selection_start: Optional[int] = Field(default=None, ge=0)
+    selection_end: Optional[int] = Field(default=None, ge=0)
 
 class ReflectionOut(BaseModel):
     id: int
     note_id: int
     mode: str
     result_json: dict
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class ChatMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=4000)
+    # Highlighted passage of the note this message asks about, if any
+    quote: Optional[str] = Field(default=None, max_length=4000)
+
+class ChatMessageOut(BaseModel):
+    id: int
+    note_id: int
+    role: Literal["user", "assistant"]
+    content: str
+    quote: Optional[str] = None
     created_at: datetime
     class Config:
         from_attributes = True

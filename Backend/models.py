@@ -36,6 +36,16 @@ class Reflection(Base):
     result_json = Column(JSON, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+    id = Column(Integer, primary_key=True, index=True)
+    note_id = Column(Integer, ForeignKey("notes.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String, nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    # The highlighted passage of the note a user message is asking about, if any
+    quote = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Metric(Base):
     __tablename__ = "metrics"
     id = Column(Integer, primary_key=True, index=True)

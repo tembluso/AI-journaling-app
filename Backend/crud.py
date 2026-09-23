@@ -81,6 +81,26 @@ def save_reflection(db: Session, note_id: int, mode: str, result_json: dict):
     return reflection
 
 
+# Chat — callers must check note ownership (get_note with user_id) first;
+# chat messages are scoped to a user through their note.
+def list_chat_messages(db: Session, note_id: int):
+    stmt = (
+        select(models.ChatMessage)
+        .where(models.ChatMessage.note_id == note_id)
+        .order_by(models.ChatMessage.created_at.asc(), models.ChatMessage.id.asc())
+    )
+    return db.execute(stmt).scalars().all()
+
+def create_chat_message(db: Session, note_id: int, role: str, content: str, quote: str | None = None):
+    msg = models.ChatMessage(note_id=note_id, role=role, content=content, quote=quote)
+    db.add(msg); db.commit(); db.refresh(msg)
+    return msg
+
+def clear_chat(db: Session, note_id: int):
+    db.query(models.ChatMessage).filter(models.ChatMessage.note_id == note_id).delete()
+    db.commit()
+
+
 def get_metrics(db: Session):
     rows = db.query(models.Metric).all()
     return {r.event: r.count for r in rows}
