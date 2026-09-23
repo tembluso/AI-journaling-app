@@ -55,12 +55,17 @@ thread worth exploring next. Model bumped to `gpt-5.6-luna`.
       values that don't adapt to different notches/status bars).
 
 ## Phase 3 — Differentiating features
-- [ ] Text selection → "ask AI about this part": track selection range in
-      the editor, send just that substring + surrounding context to a
-      reflect call.
-- [ ] Mini chat scoped to a note: new `chat_messages` table (note_id, role,
-      content, created_at) + endpoint; small threaded chat view inside the
-      note screen.
+- [x] Text selection → "ask AI about this part": the editor tracks the
+      body's selection; the reflect modes then focus on just that passage
+      (sent as code-point offsets, sliced server-side from the saved note
+      with ~600 chars of context either side), and "Ask AI" quotes it into
+      the note chat. Pending autosaves are flushed first so offsets match.
+- [x] Mini chat scoped to a note: `chat_messages` table (note_id, role,
+      content, quote, created_at; migration `add_chat_messages`) +
+      `/notes/{id}/chat` endpoints; threaded chat panel in the note screen.
+      Posting a message and generating the reply are separate calls so a
+      reply killed mid-network can be retried non-streaming without
+      duplicating the user's message.
 - [ ] Apple-Notes-like editor (e.g. `@10play/tentap-editor`) instead of a
       bare `TextInput`, for selection toolbars and smooth scrolling.
 
@@ -75,5 +80,14 @@ thread worth exploring next. Model bumped to `gpt-5.6-luna`.
 
 ## Status
 - **Phases 1 and 2 are complete.** Backend is live on Railway, Postgres on
-  Supabase, mobile app tested on a real phone via Expo Go. Next up: Phase 3
-  (highlight-to-AI, mini chat) or Phase 4 (shippability) — pick one.
+  Supabase, mobile app tested on a real phone via Expo Go.
+- **Phase 3:** highlight-to-AI and note chat are built, deployed, and
+  working on a phone. Getting there fixed three streaming bugs that had been
+  hidden behind the non-streaming fallback since Phase 2: `temperature` was
+  rejected by the model (every call silently used the fallback model), the
+  sync OpenAI client blocked the server's event loop, and the app's SSE
+  parser split on `\n\n` while the server sends CRLF (it never saw a single
+  frame). Reflections now also render formatted while streaming (partial
+  JSON parsing) instead of as raw JSON. The rich-text editor is still
+  open — it means storing HTML instead of plain text, so it needs a
+  decision on content format first.
