@@ -79,22 +79,37 @@ export const moveNote = (id: number, folder_id: number | null) =>
 
 // --- Reflect (non-streaming fallback) ---
 export type ReflectMode = "socratico" | "estructurado" | "semanal";
-export const reflectNote = (id: number, mode: ReflectMode, promptPayload: Record<string, unknown> = {}) =>
+
+// A highlighted passage, as offsets into the note's *saved* content. Offsets
+// are Unicode code points (what the Python backend indexes by), not the
+// UTF-16 units JS strings and TextInput selections use — see toCodePointRange.
+export type SelectionRange = { start: number; end: number };
+
+export function toCodePointRange(text: string, start: number, end: number): SelectionRange {
+  const cpStart = Array.from(text.slice(0, start)).length;
+  return { start: cpStart, end: cpStart + Array.from(text.slice(start, end)).length };
+}
+
+export const reflectNote = (
+  id: number,
+  mode: ReflectMode,
+  selection?: SelectionRange | null,
+  promptPayload: Record<string, unknown> = {}
+) =>
   request(`/notes/${id}/reflect`, {
     method: "POST",
-    body: JSON.stringify({ mode, prompt_payload: promptPayload }),
+    body: JSON.stringify({
+      mode,
+      prompt_payload: promptPayload,
+      ...(selection ? { selection_start: selection.start, selection_end: selection.end } : {}),
+    }),
   });
 
-// --- Reflect (streaming) ---
+// --- Streaming (SSE) ---
 // The backend serves SSE (`text/event-stream`). Browser EventSource can't
 // send an Authorization header, but the plain fetch streaming body reader
 // (via expo/fetch, which supports ReadableStream on native) can — so we
 // parse the SSE framing ourselves instead of using EventSource.
-type StreamHandlers = {
-  onChunk?: (delta: string) => void;
-  onDone?: (result: { fullText: string; parsed: Record<string, unknown> | null; error: string | null }) => void;
-  onError?: (err: Error) => void;
-};
 
 // Some networks (proxies, campus/corporate wifi, content filtering) buffer or
 // silently drop long-lived chunked connections without ever erroring the
@@ -103,8 +118,12 @@ type StreamHandlers = {
 // back to the non-streaming endpoint instead of hanging forever.
 const STREAM_STALL_MS = 12000;
 
-export async function streamReflect(noteId: number, mode: ReflectMode, handlers: StreamHandlers, signal?: AbortSignal) {
-  const url = `${API_BASE}/ai/reflect/stream?note_id=${noteId}&mode=${mode}`;
+async function streamSSE(
+  path: string,
+  onEvent: (eventType: string, data: any) => void,
+  onError: ((err: Error) => void) | undefined,
+  signal?: AbortSignal
+) {
   const internalController = new AbortController();
   signal?.addEventListener("abort", () => internalController.abort());
 
@@ -120,7 +139,7 @@ export async function streamReflect(noteId: number, mode: ReflectMode, handlers:
 
   try {
     resetStallTimer();
-    const res = await expoFetch(url, {
+    const res = await expoFetch(`${API_BASE}${path}`, {
       headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
       signal: internalController.signal,
     });
@@ -153,29 +172,94 @@ export async function streamReflect(noteId: number, mode: ReflectMode, handlers:
         }
         if (!data) continue;
 
+        let parsed: any;
         try {
-          const parsed = JSON.parse(data);
-          if (eventType === "chunk") {
-            handlers.onChunk?.(parsed.delta || "");
-          } else if (eventType === "done") {
-            handlers.onDone?.({
-              fullText: parsed.full_text || "",
-              parsed: parsed.parsed ?? null,
-              error: parsed.error ?? null,
-            });
-          }
+          parsed = JSON.parse(data);
         } catch {
-          // ignore malformed frame
+          continue; // ignore malformed frame
         }
+        onEvent(eventType, parsed);
       }
     }
   } catch (e: any) {
     if (e?.name === "AbortError") {
-      if (stalled) handlers.onError?.(new Error("Timed out waiting for a response"));
+      if (stalled) onError?.(new Error("Timed out waiting for a response"));
       return;
     }
-    handlers.onError?.(e instanceof Error ? e : new Error(String(e)));
+    onError?.(e instanceof Error ? e : new Error(String(e)));
   } finally {
     if (stallTimer) clearTimeout(stallTimer);
   }
+}
+
+type StreamHandlers<Done> = {
+  onChunk?: (delta: string) => void;
+  onDone?: (result: Done) => void;
+  onError?: (err: Error) => void;
+};
+
+type ReflectDone = { fullText: string; parsed: Record<string, unknown> | null; error: string | null };
+
+export function streamReflect(
+  noteId: number,
+  mode: ReflectMode,
+  handlers: StreamHandlers<ReflectDone>,
+  opts: { signal?: AbortSignal; selection?: SelectionRange | null } = {}
+) {
+  const sel = opts.selection ? `&selection_start=${opts.selection.start}&selection_end=${opts.selection.end}` : "";
+  return streamSSE(
+    `/ai/reflect/stream?note_id=${noteId}&mode=${mode}${sel}`,
+    (eventType, data) => {
+      if (eventType === "chunk") {
+        handlers.onChunk?.(data.delta || "");
+      } else if (eventType === "done") {
+        handlers.onDone?.({
+          fullText: data.full_text || "",
+          parsed: data.parsed ?? null,
+          error: data.error ?? null,
+        });
+      }
+    },
+    handlers.onError,
+    opts.signal
+  );
+}
+
+// --- Note chat ---
+// Posting a message and getting the AI's reply are separate calls, so a reply
+// that fails to stream can be retried via chatReply without re-posting (and
+// duplicating) the user's message.
+export type ChatMessage = {
+  id: number;
+  note_id: number;
+  role: "user" | "assistant";
+  content: string;
+  quote: string | null;
+  created_at: string;
+};
+
+export const listChat = (noteId: number) => request(`/notes/${noteId}/chat`) as Promise<ChatMessage[]>;
+export const sendChatMessage = (noteId: number, content: string, quote?: string | null) =>
+  request(`/notes/${noteId}/chat`, {
+    method: "POST",
+    body: JSON.stringify({ content, quote: quote || null }),
+  }) as Promise<ChatMessage>;
+export const clearChat = (noteId: number) => request(`/notes/${noteId}/chat`, { method: "DELETE" });
+// Non-streaming fallback for the reply. 409 means there's nothing waiting for
+// a reply (e.g. the streamed reply was actually saved before the connection died).
+export const chatReply = (noteId: number) =>
+  request(`/notes/${noteId}/chat/reply`, { method: "POST" }) as Promise<ChatMessage>;
+
+type ChatReplyDone = { message: ChatMessage | null; error: string | null };
+
+export function streamChatReply(noteId: number, handlers: StreamHandlers<ChatReplyDone>, signal?: AbortSignal) {
+  return streamSSE(
+    `/notes/${noteId}/chat/reply/stream`,
+    (eventType, data) => {
+      if (eventType === "chunk") handlers.onChunk?.(data.delta || "");
+      else if (eventType === "done") handlers.onDone?.({ message: data.message ?? null, error: data.error ?? null });
+    },
+    handlers.onError,
+    signal
+  );
 }

@@ -15,7 +15,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as api from "../api/client";
-import type { ReflectMode } from "../api/client";
+import type { ReflectMode, SelectionRange } from "../api/client";
+import NoteChat from "../components/NoteChat";
 import type { RootStackParamList } from "../navigation/types";
 import { colors, font, radius, spacing } from "../theme";
 
@@ -29,6 +30,8 @@ const MODES: { key: ReflectMode; label: string; icon: keyof typeof Ionicons.glyp
 
 const AUTOSAVE_DELAY_MS = 800;
 
+type Panel = "reflect" | "chat";
+
 export default function NoteEditorScreen({ route, navigation }: Props) {
   const { noteId, defaultFolderId = null } = route.params;
   const insets = useSafeAreaInsets();
@@ -38,8 +41,12 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(!!noteId);
   const [saving, setSaving] = useState(false);
-  const [reflectOpen, setReflectOpen] = useState(false);
+  const [panel, setPanel] = useState<Panel | null>(null);
   const [reflectMode, setReflectMode] = useState<ReflectMode>("estructurado");
+  // The highlighted passage the reflection currently shown was scoped to, if any
+  const [reflectFocus, setReflectFocus] = useState<string | null>(null);
+  // Non-empty text selection in the note body (UTF-16 offsets into `content`)
+  const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [reflectBusy, setReflectBusy] = useState(false);
   const [reflectStreamText, setReflectStreamText] = useState("");
   const [reflection, setReflection] = useState<Record<string, unknown> | null>(null);
@@ -50,6 +57,11 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reflectAbort = useRef<AbortController | null>(null);
   const creatingNote = useRef<Promise<number> | null>(null);
+  // Refs mirroring state, so flushSave() can see the latest values without
+  // waiting for a re-render.
+  const idRef = useRef<number | undefined>(noteId);
+  const latest = useRef({ title: "", content: "" });
+  const pendingSave = useRef<Promise<void> | null>(null);
 
   useEffect(() => () => reflectAbort.current?.abort(), []);
 
@@ -64,6 +76,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         const note = await api.getNote(noteId);
         setTitle(note.title);
         setContent(note.content);
+        latest.current = { title: note.title, content: note.content };
         setFolderId(note.folder_id);
       } catch (e: any) {
         setError(e.message);
@@ -88,6 +101,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             creatingNote.current = api
               .createNote({ title: nextTitle, content: nextContent, folder_id: folderId })
               .then((created) => {
+                idRef.current = created.id;
                 setId(created.id);
                 return created.id;
               });
@@ -111,8 +125,27 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
   );
 
   function scheduleSave(nextTitle: string, nextContent: string) {
+    latest.current = { title: nextTitle, content: nextContent };
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => persist(nextTitle, nextContent), AUTOSAVE_DELAY_MS);
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null;
+      pendingSave.current = persist(nextTitle, nextContent);
+    }, AUTOSAVE_DELAY_MS);
+  }
+
+  // Saves any not-yet-saved edits right now and waits for in-flight saves, so
+  // AI calls (which read the note server-side) see exactly what's on screen —
+  // selection offsets in particular must match the saved text. Returns the
+  // note id, or undefined if the note is still empty/unsaved.
+  async function flushSave(): Promise<number | undefined> {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      pendingSave.current = persist(latest.current.title, latest.current.content);
+    }
+    await pendingSave.current;
+    if (creatingNote.current) await creatingNote.current.catch(() => {});
+    return idRef.current;
   }
 
   function onTitleChange(v: string) {
@@ -125,7 +158,14 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     scheduleSave(title, v);
   }
 
+  const selectedText = selection ? content.slice(selection.start, selection.end) : null;
+
   async function runReflection(mode: ReflectMode) {
+    // Capture the selection before awaiting — it's relative to the text as
+    // it is right now, which is also what flushSave() persists.
+    const focusText = selectedText?.trim() ? selectedText : null;
+    const focusRange = focusText && selection ? api.toCodePointRange(content, selection.start, selection.end) : null;
+    const id = await flushSave();
     if (!id) {
       Alert.alert("Save first", "Write something before asking for a reflection.");
       return;
@@ -135,7 +175,8 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
     reflectAbort.current = controller;
 
     setReflectMode(mode);
-    setReflectOpen(true);
+    setReflectFocus(focusText);
+    setPanel("reflect");
     setReflectBusy(true);
     setReflection(null);
     setReflectStreamText("");
@@ -167,7 +208,7 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             return;
           }
           try {
-            const result = await api.reflectNote(id, mode);
+            const result = await api.reflectNote(id, mode, focusRange);
             setReflection(result.result_json);
           } catch (fallbackErr: any) {
             setError(fallbackErr.message);
@@ -176,8 +217,12 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           }
         },
       },
-      controller.signal
+      { signal: controller.signal, selection: focusRange }
     );
+  }
+
+  function toggleChat() {
+    setPanel((prev) => (prev === "chat" ? null : "chat"));
   }
 
   async function chooseFolder() {
@@ -271,6 +316,10 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
           placeholderTextColor={colors.placeholder}
           value={content}
           onChangeText={onContentChange}
+          onSelectionChange={(e) => {
+            const { start, end } = e.nativeEvent.selection;
+            setSelection(end > start ? { start, end } : null);
+          }}
           multiline
           textAlignVertical="top"
         />
@@ -283,9 +332,22 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
         </View>
       )}
 
+      {!!selectedText?.trim() && (
+        <View style={styles.focusBar}>
+          <Ionicons name="text-outline" size={14} color={colors.accent} />
+          <Text style={styles.focusText} numberOfLines={1}>
+            “{selectedText.trim()}”
+          </Text>
+          <Pressable style={styles.focusAsk} onPress={() => setPanel("chat")} hitSlop={6}>
+            <Ionicons name="chatbubble-ellipses-outline" size={14} color={colors.accent} />
+            <Text style={styles.focusAskText}>Ask AI</Text>
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.reflectBar}>
         {MODES.map((m) => {
-          const active = reflectOpen && reflectMode === m.key;
+          const active = panel === "reflect" && reflectMode === m.key;
           return (
             <Pressable
               key={m.key}
@@ -297,15 +359,40 @@ export default function NoteEditorScreen({ route, navigation }: Props) {
             </Pressable>
           );
         })}
-        {reflectOpen && (
-          <Pressable style={styles.closeReflectButton} onPress={() => setReflectOpen(false)} hitSlop={8}>
+        <Pressable
+          style={[styles.modeChip, panel === "chat" && styles.modeChipActive]}
+          onPress={toggleChat}
+        >
+          <Ionicons
+            name="chatbubbles-outline"
+            size={14}
+            color={panel === "chat" ? colors.accent : colors.textMuted}
+          />
+        </Pressable>
+        {panel && (
+          <Pressable style={styles.closeReflectButton} onPress={() => setPanel(null)} hitSlop={8}>
             <Ionicons name="close" size={18} color={colors.textFaint} />
           </Pressable>
         )}
       </View>
 
-      {reflectOpen && (
+      {panel === "chat" && (
+        <NoteChat
+          noteId={id}
+          ensureSaved={flushSave}
+          quote={selectedText?.trim() || null}
+          onClearQuote={() => setSelection(null)}
+          bottomInset={insets.bottom}
+        />
+      )}
+
+      {panel === "reflect" && (
         <View style={[styles.reflectPanel, { paddingBottom: insets.bottom + spacing.md }]}>
+          {!!reflectFocus && (
+            <Text style={styles.reflectFocus} numberOfLines={2}>
+              On “{reflectFocus.trim()}”
+            </Text>
+          )}
           {reflectBusy ? (
             <ScrollView style={styles.reflectScroll}>
               <View style={styles.thinkingRow}>
@@ -388,6 +475,21 @@ const styles = StyleSheet.create({
   modeChipText: { color: colors.textMuted, fontSize: font.sm, fontWeight: "500" },
   modeChipTextActive: { color: colors.accent },
   closeReflectButton: { marginLeft: "auto", padding: 4 },
+  focusBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+    borderRadius: radius.sm,
+    backgroundColor: colors.accentSoft,
+  },
+  focusText: { color: colors.textMuted, fontSize: font.sm, fontStyle: "italic", flex: 1 },
+  focusAsk: { flexDirection: "row", alignItems: "center", gap: 4 },
+  focusAskText: { color: colors.accent, fontSize: font.sm, fontWeight: "600" },
+  reflectFocus: { color: colors.textMuted, fontSize: font.sm, fontStyle: "italic", marginBottom: spacing.sm },
   reflectPanel: {
     backgroundColor: colors.surface,
     borderTopWidth: 1,
