@@ -7,8 +7,8 @@ from openai import OpenAI
 load_dotenv(find_dotenv())
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# Puedes cambiar por env si quieres otro: OPENAI_MODEL=gpt-4o-mini (tu caso)
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# Puedes cambiar por env si quieres otro: OPENAI_MODEL=gpt-5.6-luna (tu caso)
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-luna")
 # Opcional: modelo de fallback para chat.completions si Responses falla
 OPENAI_CHAT_FALLBACK = os.getenv("OPENAI_CHAT_FALLBACK", "gpt-3.5-turbo")
 
@@ -19,101 +19,106 @@ def _client() -> OpenAI:
 
 def build_prompt(note_text: str, mode: str) -> str:
     """
-    Devuelve un prompt específico por modo, en español, con énfasis en expandir matices,
-    contra‑ejemplos y acciones. Siempre exige salida JSON estricta (sin markdown).
+    Returns a mode-specific prompt in English. The goal is expansion, not
+    evaluation: take the user's own reflection further by connecting it to
+    other ideas, angles, and questions, rather than grading or auditing it
+    like a business plan. Always demands strict JSON output (no markdown).
     """
     note_text = (note_text or "").strip()
     base_guard = (
-        "Devuelve SOLO JSON válido (sin markdown, sin comentarios) y exactamente las claves del esquema indicado "
-        "para cada modo. Sé concreto, evita vaguedades, aporta matices, contra‑ejemplos y ejemplos prácticos. "
-        "No inventes datos personales. Responde en español neutro."
+        "Return ONLY valid JSON (no markdown, no comments) using exactly the keys in the schema "
+        "given for this mode. Be concrete and specific, not generic — ground everything in what "
+        "the note actually says. Don't invent personal facts about the user. Respond in English."
     )
 
     if mode == "socratico":
-        # Socrático → preguntas + siguiente acción
+        # Socratic — probing questions that open the idea up, plus one small next step
         return f"""
 {base_guard}
-Modo: SOCRÁTICO.
-Objetivo: ayudar al usuario a examinar y expandir su idea desde varios ángulos.
-Instrucciones:
-- Formula de 3 a 6 preguntas socráticas que exploren supuestos, consecuencias, alternativas y contra‑argumentos.
-- Evita preguntas triviales; busca profundidad y diferentes perspectivas.
-- Propón UNA siguiente acción breve y realista (con un deadline sugerido ISO YYYY-MM-DD si aplica).
-- Si la nota es vaga, enfoca preguntas para concretar.
+Mode: SOCRATIC.
+Goal: help the user pull on threads in their own thinking — surface hidden assumptions,
+overlooked consequences, and angles they haven't considered yet.
+Instructions:
+- Ask 3 to 6 Socratic questions that dig into assumptions, implications, alternatives, and counterarguments in the note.
+- Avoid generic or shallow questions; go for real depth and a genuine change of perspective.
+- Suggest ONE small, concrete next step the user could take to explore one of these questions further.
+- If the note is vague, aim your questions at helping the user get more concrete.
 
-Texto de la nota (contexto del usuario):
+The user's note:
 \"\"\"{note_text}\"\"\"
 
-Esquema JSON de salida:
+Output JSON schema:
 {{
-  "questions": [string, ...], 
-  "next_action": {{"text": string, "deadline": string | null}}
+  "questions": [string, ...],
+  "next_step": string
 }}
 """.strip()
 
     if mode == "estructurado":
-        # Estructurado → análisis con varios apartados
+        # Expand — connect the note to other ideas, angles, and open threads
         return f"""
 {base_guard}
-Modo: ESTRUCTURADO.
-Objetivo: analizar y ampliar la idea con pensamiento crítico y plan accionable.
-Instrucciones:
-- Explica por qué importa esta idea (impacto y valor).
-- Enumera de 3 a 6 supuestos implícitos que podrían no cumplirse.
-- Enumera de 2 a 5 riesgos/obstáculos con un breve matiz o contra‑ejemplo.
-- Propón un primer paso alcanzable que pueda hacerse en ~30 minutos.
-- Define una métrica de éxito observable.
-- Aporta matices: alternativas, puntos ciegos y ejemplos concisos.
+Mode: EXPAND.
+Goal: take the user's reflection further. Don't evaluate or grade it — expand it. Help the
+user see more than they wrote by connecting their idea to other ideas, fields, or ways of
+looking at it, and by surfacing viewpoints they may not have considered.
+Instructions:
+- Write a short expansion (2-4 sentences) that deepens the note's core idea — add nuance,
+  context, or a "here's what this connects to" angle. Build on what they wrote, don't just restate it.
+- List 3 to 5 connected ideas: related concepts, analogies, or ideas from other domains
+  (psychology, other people's experiences, books, history, etc.) that genuinely link to this note.
+- List 2 to 4 alternative perspectives: other ways to frame or see this situation, including at
+  least one that gently challenges the note's own framing.
+- Name ONE specific thread from all of this that seems most worth exploring next, and why.
 
-Texto de la nota:
+The user's note:
 \"\"\"{note_text}\"\"\"
 
-Esquema JSON de salida:
+Output JSON schema:
 {{
-  "por_qué_importa": string,
-  "supuestos": [string, ...],
-  "riesgos": [string, ...],
-  "primer_paso_30min": string,
-  "métrica_de_éxito": string
+  "expanded_reflection": string,
+  "connected_ideas": [string, ...],
+  "alternative_perspectives": [string, ...],
+  "worth_exploring_next": string
 }}
 """.strip()
 
     if mode == "semanal":
-        # Semanal → revisión y ampliación
+        # Weekly — review and widen the lens for the week ahead
         return f"""
 {base_guard}
-Modo: SEMANAL.
-Objetivo: revisar la semana y ampliar perspectivas para la siguiente.
-Instrucciones:
-- Extrae de 3 a 6 temas relevantes que emerjan del texto (hábitos, emociones, patrones).
-- Señala una creencia a cuestionar (bias/afirmación rígida) con un ángulo alternativo.
-- Propón un micro‑experimento sencillo para la próxima semana que explore un matiz distinto.
+Mode: WEEKLY.
+Goal: review the week and widen the perspective going into the next one.
+Instructions:
+- Pull out 3 to 6 themes that emerge from the text (habits, emotions, recurring patterns).
+- Name one belief or rigid assumption worth questioning, and offer an alternative angle on it.
+- Suggest one small experiment for next week that explores a different nuance of this.
 
-Texto de la nota:
+The user's note:
 \"\"\"{note_text}\"\"\"
 
-Esquema JSON de salida:
+Output JSON schema:
 {{
-  "temas": [string, ...],
-  "creencia_a_cuestionar": string,
-  "micro_experimento": string
+  "themes": [string, ...],
+  "belief_to_question": string,
+  "micro_experiment": string
 }}
 """.strip()
 
-    # Fallback: resumen + ideas + acciones (por si llega un 'mode' desconocido)
+    # Fallback for an unknown mode
     return f"""
 {base_guard}
-Modo: GENERAL.
-Objetivo: resumir y ampliar la idea con matices, alternativas y acciones.
-Instrucciones:
-- Escribe un resumen de 1–2 frases con el matiz principal.
-- Ofrece entre 3 y 6 insights variados (incluye al menos 1 contra‑punto).
-- Propón entre 2 y 4 acciones específicas y realistas.
+Mode: GENERAL.
+Goal: summarize and expand the idea with nuance, alternatives, and connections.
+Instructions:
+- Write a 1-2 sentence summary capturing the main nuance.
+- Offer 3 to 6 varied insights (include at least 1 counterpoint or connection to another idea).
+- Suggest 2 to 4 specific, realistic next steps.
 
-Texto de la nota:
+The user's note:
 \"\"\"{note_text}\"\"\"
 
-Esquema JSON de salida:
+Output JSON schema:
 {{
   "summary": string,
   "insights": [string, ...],

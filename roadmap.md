@@ -10,18 +10,25 @@ Keep the FastAPI note/folder CRUD logic and the `ai_stream.py` prompt design
 These are backend logic and carry forward unchanged in spirit; only the
 transport (SSE) and storage layer change in later phases.
 
+Since then: prompts rewritten in English, and the "structured" mode reframed
+from a rigid business-analysis checklist to an actual expansion of the
+user's own reflection — connected ideas, alternative perspectives, one
+thread worth exploring next. Model bumped to `gpt-5.6-luna`.
+
 ## Phase 1 — Backend: make it reachable and safe
 - [x] Swap SQLite → Postgres. Using Supabase project "Journaling App"
       (`eqmgfasourirfmaurrlb`), schema applied via migration. Connect
       through the session pooler host, not `db.<ref>.supabase.co` directly —
       that host is IPv6-only and won't resolve on most networks.
-- [ ] Deploy FastAPI somewhere reachable (Railway/Render/Fly.io) with secrets
-      as real env vars, not a `.env` sitting next to code.
-- [ ] Add real auth. `User` model exists but is unused — every note is global.
-      Add token-based auth and scope notes/folders/reflections to `user_id`.
-- [ ] Lock CORS down to the deployed app's real origin(s).
-- [ ] Repo hygiene: fix the stray/misspelled `requirements.txt`, ensure
-      `.venv`/`.env` are gitignored and untracked.
+- [x] Deploy FastAPI to Railway: https://journaling-app-backend-production.up.railway.app
+      (project `journaling-app-backend`), secrets as Railway env vars.
+      Single root-level `requirements.txt`/`.venv`/`Procfile` — matches
+      what Railway's build already needed, so there's no more duplicate
+      dependency list to keep in sync.
+- [x] Add real auth (JWT + bcrypt), notes/folders/reflections scoped to
+      `user_id`.
+- [x] Lock CORS down via `ALLOWED_ORIGINS` env var.
+- [x] Repo hygiene: `requirements.txt` fixed, `.venv`/`.env` gitignored.
 
 ## Phase 2 — Mobile app shell (Expo / React Native)
 - [x] New Expo (React Native + TypeScript) project in `mobile/` — replaces
@@ -30,12 +37,22 @@ transport (SSE) and storage layer change in later phases.
 - [x] Auth screens wired to the Phase 1 backend, token in `expo-secure-store`.
 - [x] Note list + note editor (autosave) + reflect panel as native screens
       with React Navigation.
-- [ ] Folders UI (backend supports it; app currently shows a flat list).
-- [ ] Replace the current blocking non-streaming reflect call with a RN-
-      compatible streaming approach (chunked fetch instead of `EventSource`,
-      which doesn't exist in RN).
-- [ ] Verify on a real phone via Expo Go (bundles cleanly on web/Metro as
-      of this pass; physical-device check still pending).
+- [x] Folders UI: filter bar + create/delete on the notes list, move-to-
+      folder picker in the note editor.
+- [x] Streaming reflection via `expo/fetch`'s ReadableStream body reader,
+      parsing the backend's SSE frames by hand (also fixes an auth gap:
+      browser `EventSource` can't send an Authorization header, but this
+      fetch-based reader can).
+- [x] Verified on a real phone via Expo Go. Found and fixed along the way:
+      a folder-creation double-submit race (409 on duplicate names now
+      instead of an unhandled 500), a note-creation race that could create
+      the same note multiple times under slow network conditions, and made
+      the streaming reflect call resilient (stall timeout + automatic
+      fallback to the non-streaming endpoint) after some networks turned
+      out to silently kill long-lived connections.
+- [x] UI pass: `@expo/vector-icons`, a shared `src/theme.ts`, and proper
+      `useSafeAreaInsets()` everywhere (previously hardcoded `paddingTop`
+      values that don't adapt to different notches/status bars).
 
 ## Phase 3 — Differentiating features
 - [ ] Text selection → "ask AI about this part": track selection range in
@@ -57,5 +74,6 @@ transport (SSE) and storage layer change in later phases.
 ---
 
 ## Status
-- **Current phase:** Phase 2 (mobile shell) — core screens built, needs a
-  real-device check via Expo Go and folders UI.
+- **Phases 1 and 2 are complete.** Backend is live on Railway, Postgres on
+  Supabase, mobile app tested on a real phone via Expo Go. Next up: Phase 3
+  (highlight-to-AI, mini chat) or Phase 4 (shippability) — pick one.

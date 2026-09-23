@@ -1,106 +1,76 @@
 # Journaling AI App ✍️🤖
 
-A minimal, Apple Notes–style journaling app with AI reflections. Users can write notes and send them to an AI to get insights in three modes (Socratic, Structured, Weekly). The UI supports **live streaming** (SSE) so reflections appear in real time.
+A minimal, Apple Notes–style journaling app with AI reflections. Write notes on your phone
+and get AI insights in three modes (Socratic, Structured/Expand, Weekly), streamed live as
+they're generated.
+
+See [`roadmap.md`](./roadmap.md) for the full build plan and current status.
 
 ## Tech Stack
-- **Frontend:** Vite + React + TailwindCSS  
-- **Backend:** FastAPI (Python) + SQLAlchemy + SQLite  
-- **AI:** OpenAI API with **SSE** streaming endpoint
+- **Mobile app:** Expo (React Native + TypeScript)
+- **Backend:** FastAPI (Python) + SQLAlchemy, deployed on Railway
+- **Database:** Postgres, hosted on Supabase
+- **AI:** OpenAI API, streamed via SSE
 
-## Features
-- Create, edit, delete notes
-- AI reflections with three modes:
-  - **Socratic:** questions + next action
-  - **Structured:** why-it-matters, assumptions, risks, first step, success metric
-  - **Weekly:** themes, belief to challenge, micro-experiment
-- Live streaming (text appears progressively)
-- Create sub-notes from reflections
+## Layout
+```
+├─ Backend/          # FastAPI app (package name capitalized — referenced as
+│                     Backend.main:app by the Procfile; don't rename lightly)
+│  ├─ main.py         # routes
+│  ├─ models.py       # SQLAlchemy models
+│  ├─ schemas.py       # Pydantic schemas
+│  ├─ crud.py         # DB access
+│  ├─ auth.py         # JWT + password hashing
+│  ├─ ai_stream.py     # OpenAI prompts + streaming
+│  └─ .env            # local secrets (gitignored) — see .env.example
+├─ mobile/           # Expo app — the actual client
+├─ requirements.txt  # single source of truth for Python deps (used for both
+│                     local dev and Railway's build — keep it at the root)
+├─ Procfile          # Railway's start command
+└─ roadmap.md
+```
 
-## Monorepo Layout
-├─ Backend/ # FastAPI app
-
-│ ├─ main.py
-
-│ ├─ ... (routers/services)
-
-│ └─ requirements.txt # Python deps for Backend
-
-├─ frontend/ # Vite + React + Tailwind
-
-│ ├─ package.json
-
-│ └─ src/...
-
-└─ README.md # This file
-
-
-## Prerequisites
-- **Python 3.10+**
-- **Node 18+** (or newer)
-- An **OpenAI API key**
-
-## Setup
+## Local development
 
 ### Backend
 ```bash
-cd Backend
-python -m venv venv
+python -m venv .venv
+# Windows:
+.venv\Scripts\Activate.ps1
 # macOS/Linux:
-source venv/bin/activate
-# Windows (PowerShell):
-# .\venv\Scripts\Activate.ps1
+source .venv/bin/activate
 
 pip install -r requirements.txt
+cp Backend/.env.example Backend/.env   # fill in OPENAI_API_KEY, DATABASE_URL, JWT_SECRET_KEY
 
-# run the API
-uvicorn Backend.main:app --reload --port 8000
+# run from the repo root (Backend is a package, not a standalone script)
+uvicorn Backend.main:app --reload --host 0.0.0.0 --port 8000
 ```
+`--host 0.0.0.0` matters if you want to test against a phone on the same Wi-Fi instead of
+the deployed Railway backend — see `mobile/README.md`.
 
-### Frontend
-
+### Mobile app
 ```bash
-cd frontend
+cd mobile
 npm install
-# point the frontend to the backend (default shown)
-VITE_API_BASE=http://127.0.0.1:8000 npm run dev
+npm start
 ```
-Open the app at http://localhost:5173
+Scan the QR code with Expo Go. By default it talks to the deployed Railway backend; see
+`mobile/README.md` to point it at a local backend instead.
 
-### Environment Variables (Backend)
-
-Create a file named .env inside the Backend/ folder. At minimum:
-
-#### OpenAI
-```OPENAI_API_KEY=sk-xxxx...```
-
-#### Database (pick ONE of the two lines below)
-For SQLite local (default):
-```DATABASE_URL=sqlite:///./app.db```
-Or for a file in absolute path (Windows example):
-```DATABASE_URL=sqlite:///C:/path/to/app.db```
-
-## How Streaming Works (quick)
-- Backend exposes /ai/reflect/stream (SSE).
-- Frontend uses streamReflect() and renders a formatted preview while chunks arrive.
-- When the model finishes, the final structured result is shown (no raw JSON on screen).
-
-## Common Comands
-
-### Backend
-From the root:
-```uvicorn Backendmain:app --reload --port 8000```
-
-### Frontend
-From frontend/
-```npm run dev```
-
+## How streaming works (quick)
+- Backend exposes `/ai/reflect/stream` (SSE).
+- The mobile app parses the SSE frames itself via a `fetch` streaming body reader (not
+  `EventSource` — that can't send an Authorization header, which native `fetch` can).
+- If the stream stalls or errors before any data arrives (some networks kill long-lived
+  connections), it falls back to the non-streaming `/notes/{id}/reflect` endpoint.
 
 ## Troubleshooting
-- **No live output?** Verify the streaming URL is set via VITE_API_BASE and the backend is running on :8000.
-- **OpenAI errors?** Make sure OPENAI_API_KEY is set in Backend/.env and your key has access to the model you use.
-- **DB issues?** Confirm DATABASE_URL points to a writable SQLite file (or your chosen DB).
+- **AI errors?** Make sure `OPENAI_API_KEY` is set and your key has access to the model in
+  `OPENAI_MODEL`.
+- **DB issues?** Confirm `DATABASE_URL` points at Supabase's *session pooler* host, not
+  `db.<ref>.supabase.co` directly — that host is IPv6-only and won't resolve on most networks.
 
 ## License
-This project is licensed under the MIT License.  
+This project is licensed under the MIT License.
 See the [LICENSE](./LICENSE) file for details.
-

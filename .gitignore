@@ -1,10 +1,8 @@
-# Node / Frontend
+# Node
 node_modules/
 dist/
-frontend/node_modules/
-frontend/dist/
 
-# Python / Backend
+# Python
 venv/
 .venv/
 __pycache__/
@@ -21,6 +19,7 @@ output.css
 .DS_Store
 Thumbs.db
 
-# Claude Code local-only state
-.claude/settings.local.json
+# Claude Code local-only state (matches at any depth, e.g. mobile/.claude/)
+.claude/
 .agents/
+skills-lock.json

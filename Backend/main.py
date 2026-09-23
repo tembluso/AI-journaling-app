@@ -5,6 +5,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sse_starlette.sse import EventSourceResponse
 
 from . import database, models, schemas, crud
@@ -84,7 +85,11 @@ def list_folders(db: Session = Depends(get_db), current_user: models.User = Depe
 @app.post("/folders", response_model=schemas.FolderOut)
 def create_folder(folder: schemas.FolderCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     count_event(db, "POST_/folders")
-    return crud.create_folder(db, folder, current_user.id)
+    try:
+        return crud.create_folder(db, folder, current_user.id)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A folder with that name already exists")
 
 @app.delete("/folders/{folder_id}", response_model=dict)
 def delete_folder(folder_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):

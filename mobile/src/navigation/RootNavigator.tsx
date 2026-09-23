@@ -6,13 +6,14 @@ import { useAuth } from "../auth/AuthContext";
 import AuthScreen from "../screens/AuthScreen";
 import NoteEditorScreen from "../screens/NoteEditorScreen";
 import NotesListScreen from "../screens/NotesListScreen";
+import { colors } from "../theme";
 import type { RootStackParamList } from "./types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const theme = {
   ...DarkTheme,
-  colors: { ...DarkTheme.colors, background: "#09090b" },
+  colors: { ...DarkTheme.colors, background: colors.bg },
 };
 
 export default function RootNavigator() {
@@ -20,8 +21,8 @@ export default function RootNavigator() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: "#09090b", alignItems: "center", justifyContent: "center" }}>
-        <ActivityIndicator color="#6366f1" />
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: "center", justifyContent: "center" }}>
+        <ActivityIndicator color={colors.accentStrong} />
       </View>
     );
   }
